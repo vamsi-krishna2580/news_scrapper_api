@@ -2,12 +2,16 @@
 test_news_api.py  —  v2
 ========================
 Tests the advanced farmer news scraper.
-Run from inside news_scrapper_api/ folder:
+Run from project root or from news_scrapper_api/:
 
-    python test_news_api.py
+    python -m news_scrapper_api.test_news_api
+    # or from news_scrapper_api/:  python test_news_api.py
 """
 
-from news_api import get_farmer_news
+try:
+    from news_api import get_farmer_news
+except ImportError:
+    from news_scrapper_api.news_api import get_farmer_news
 
 PASS = "✅"
 FAIL = "❌"

@@ -17,14 +17,22 @@ Sources:
   6. OpenWeatherMap    — Current weather + forecast (reuses existing API key)
 """
 
+import os
 import feedparser
 import requests
 from urllib.parse import quote
 from datetime import datetime, timezone
 from typing import Optional
 
-# ── Weather API key (already in project) ──────────────────────────────────────
-OPENWEATHER_API_KEY = "REMOVED_API_KEY"
+# Load env from project root when running via uvicorn server:app
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# ── Weather API key from environment ──────────────────────────────────────────
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "").strip()
 
 # ── Language → Google News locale map ─────────────────────────────────────────
 LANGUAGE_MAP = {
@@ -167,6 +175,8 @@ def _score_and_bucket(
 
 def _get_weather_summary(city: str, state: str) -> dict:
     """Fetch current weather + 5-day forecast from OpenWeatherMap."""
+    if not OPENWEATHER_API_KEY:
+        return {}
     try:
         # Geocode city
         geo_url = (

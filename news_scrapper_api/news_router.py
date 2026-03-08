@@ -29,6 +29,7 @@ Response (v2 — categorized):
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional, Literal
 from .news_api import get_farmer_news
+from .gemini_api import get_voice_summary
 
 router = APIRouter(prefix="/news", tags=["Farmer News"])
 
@@ -113,4 +114,83 @@ def fetch_news(
         "market_news":  result.get("market_news", []),
         "pest_alerts":  result.get("pest_alerts", []),
         "govt_schemes": result.get("govt_schemes", []),
+    }
+
+
+@router.get("/voice", summary="News + Gemini voice summary in farmer's language")
+def fetch_news_with_voice(
+    city: str = Query(
+        ..., description="Farmer's city or village name", examples=["Ongole", "Nashik"]
+    ),
+    crop: str = Query(
+        ..., description="Crop the farmer is growing", examples=["rice", "wheat", "cotton"]
+    ),
+    state: Optional[str] = Query(
+        None, description="Farmer's state for regional news", examples=["Andhra Pradesh", "Punjab"]
+    ),
+    language: str = Query(
+        "en",
+        description="Farmer's language for voice summary: en / te / hi / mr / ta / kn / ml",
+        examples=["te", "hi", "en"],
+    ),
+    limit: int = Query(
+        5, ge=1, le=15,
+        description="Max articles per category"
+    ),
+):
+    """
+    Same as **GET /news**, plus **`voice_summary`**: a Gemini-generated short summary
+    in the farmer's language, optimized for reading aloud (TTS) on a toll-free call.
+
+    Requires **GEMINI_API_KEY** in `.env`. If missing, `voice_summary` is null and
+    you can use `llm_summary` (English) instead.
+    """
+    if language not in LANGUAGE_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid language '{language}'. Choose from: {list(LANGUAGE_NAMES.keys())}",
+        )
+
+    try:
+        result = get_farmer_news(
+            city=city.strip(),
+            crop=crop.strip(),
+            state=state.strip() if state else None,
+            language=language,
+            limit=limit,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"News fetch failed: {str(e)}")
+
+    llm_summary = result.get("llm_summary", "")
+    voice_summary = get_voice_summary(
+        llm_summary=llm_summary,
+        language=language,
+        city=city,
+        crop=crop,
+    )
+
+    total_articles = sum(
+        len(result.get(cat, []))
+        for cat in ["crop_news", "weather_news", "market_news", "pest_alerts", "govt_schemes"]
+    )
+
+    return {
+        "query": {
+            "city":     city,
+            "crop":     crop,
+            "state":    state or "India (national)",
+            "language": LANGUAGE_NAMES.get(language, language),
+        },
+        "total_articles": total_articles,
+        "weather":       result.get("weather", {}),
+        "llm_summary":   llm_summary,
+        "voice_summary": voice_summary,
+        "crop_news":     result.get("crop_news", []),
+        "weather_news":  result.get("weather_news", []),
+        "market_news":   result.get("market_news", []),
+        "pest_alerts":   result.get("pest_alerts", []),
+        "govt_schemes":  result.get("govt_schemes", []),
     }

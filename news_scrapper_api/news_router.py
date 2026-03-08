@@ -27,9 +27,12 @@ Response (v2 — categorized):
 """
 
 from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import StreamingResponse
 from typing import Optional, Literal
+import io
 from .news_api import get_farmer_news
 from .gemini_api import get_voice_summary
+from .tts_api import text_to_mp3
 
 router = APIRouter(prefix="/news", tags=["Farmer News"])
 
@@ -115,6 +118,74 @@ def fetch_news(
         "pest_alerts":  result.get("pest_alerts", []),
         "govt_schemes": result.get("govt_schemes", []),
     }
+
+
+@router.get("/voice/audio", summary="Voice summary as downloadable MP3 audio file")
+def fetch_news_voice_audio(
+    city: str = Query(
+        ..., description="Farmer's city or village name", examples=["Ongole", "Nashik"]
+    ),
+    crop: str = Query(
+        ..., description="Crop the farmer is growing", examples=["rice", "wheat", "cotton"]
+    ),
+    state: Optional[str] = Query(
+        None, description="Farmer's state for regional news", examples=["Andhra Pradesh", "Punjab"]
+    ),
+    language: str = Query(
+        "en",
+        description="Language for voice (and TTS): en / te / hi / mr / ta / kn / ml",
+        examples=["te", "hi", "en"],
+    ),
+    limit: int = Query(
+        5, ge=1, le=15,
+        description="Max articles per category"
+    ),
+):
+    """
+    Returns the **voice summary as an MP3 audio file** (text-to-speech in the farmer's language).
+    Uses Gemini for the summary text (if GEMINI_API_KEY set), then gTTS for speech.
+    If Gemini is not available, uses the English llm_summary for TTS.
+    """
+    if language not in LANGUAGE_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid language '{language}'. Choose from: {list(LANGUAGE_NAMES.keys())}",
+        )
+
+    try:
+        result = get_farmer_news(
+            city=city.strip(),
+            crop=crop.strip(),
+            state=state.strip() if state else None,
+            language=language,
+            limit=limit,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"News fetch failed: {str(e)}")
+
+    llm_summary = result.get("llm_summary", "")
+    voice_summary = get_voice_summary(
+        llm_summary=llm_summary,
+        language=language,
+        city=city,
+        crop=crop,
+    )
+    text_to_speak = (voice_summary or llm_summary or "").strip()
+    if not text_to_speak:
+        raise HTTPException(status_code=500, detail="No summary text available for audio.")
+
+    audio_bytes = text_to_mp3(text=text_to_speak, language=language)
+    if not audio_bytes:
+        raise HTTPException(status_code=500, detail="TTS failed to generate audio.")
+
+    filename = f"farmer_voice_{city}_{crop}.mp3".replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(audio_bytes),
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/voice", summary="News + Gemini voice summary in farmer's language")
